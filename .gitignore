@@ -37,3 +37,8 @@ target/
 
 # Logs
 *.log
+
+# Desktop tooling output
+/desktop/src-tauri/gen/schemas/
+/desktop/*.tsbuildinfo
+/desktop/.vite/

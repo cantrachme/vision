@@ -1,0 +1,1 @@
+{"identifier":"main-capability","description":"Main window: local backend health checks only","windows":["main"],"permissions":["core:default",{"identifier":"http:default","allow":[{"url":"http://127.0.0.1:*/health"},{"url":"http://localhost:*/health"}]}]}
