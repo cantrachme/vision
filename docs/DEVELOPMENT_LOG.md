@@ -5,7 +5,7 @@ VISION is a voice-first desktop AI assistant for macOS and Windows. The current 
 
 ## Relevant structure and implemented features
 - `backend/app/main.py`: FastAPI application, request validation, root and health endpoints, and `POST /api/v1/chat`.
-- `backend/app/services/llm.py`: loads environment configuration and uses the asynchronous OpenAI Responses API. Sends a system instruction and user message, limits output to 300 tokens, and returns response text. No desktop tools are connected.
+- `backend/app/services/llm.py`: loads environment configuration and selects local Ollama by default or the asynchronous OpenAI Responses API. Sends a system instruction and user message, limits output to 300 tokens, and returns response text. No desktop tools are connected.
 - `backend/requirements.txt`: backend installation dependencies.
 - Root `requirements.txt`: existing alternative dependency snapshot, including OpenAI.
 - `backend/tests/test_chat.py`: focused offline regression tests.
@@ -28,3 +28,37 @@ Kept existing application behavior and endpoints unchanged. Existing local chang
 
 ### Pending work and limitations
 The original 502 remains unresolved pending sanitized provider failure status/category or connectivity evidence from the actual server environment. Avoid changing credentials, model selection, or TLS verification without evidence. Voice, desktop UI, persistence, and tool execution remain planned.
+
+## Task 02 — Safe live-failure diagnostics (2026-11-01)
+- Updated `backend/app/main.py` to emit a JSON error event with exception type, HTTP status, and an allowlisted provider error code. Unknown codes become `unrecognized`; missing fields become null. Exception messages, tracebacks, bodies, headers, and user content are excluded. Client-facing 502 text is unchanged.
+- Expanded `backend/tests/test_chat.py`: five tests passed, including ASGI HTTP checks for root, health, chat success, and invalid input, plus structured logging and sensitive-content exclusion.
+- External networking is restricted in this execution environment. No live request was attempted in Task 02. The original provider failure remains unconfirmed; Task 01's connection failure does not establish the local server's cause.
+- Local diagnostic: from the project root, run the following command. It invokes the chat handler once using the configured model and credentials, disables SDK retries, prints only safe logs/status, and suppresses response content and tracebacks. It may incur one API request.
+
+```bash
+cd /Users/rachit/Downloads/Projects/vision/backend && .venv/bin/python -c 'import asyncio, logging; from fastapi import HTTPException; from app.main import chat, ChatRequest; from app.services import llm; logging.basicConfig(level=logging.ERROR); llm.client = llm.client.with_options(max_retries=0, timeout=20); exec("async def check():\n try:\n  await chat(ChatRequest(message=\"Reply OK\"))\n  print(\"Provider request succeeded\")\n except HTTPException as exc:\n  print(\"Chat HTTP status:\", exc.status_code)"); asyncio.run(check())'
+```
+
+
+## Task 03 — Local Ollama provider (2026-11-01)
+- `backend/app/services/llm.py`: selects `LLM_PROVIDER=ollama` by default, with `OLLAMA_MODEL=qwen3:4b` and `OLLAMA_BASE_URL=http://127.0.0.1:11434`. Uses native `/api/chat`, non-streaming responses, a 300-token output limit, and `think:false` ([official API reference](https://github.com/ollama/ollama/blob/main/docs/api.md)). Thinking control depends on server/model support.
+- OpenAI is constructed only when selected, so local mode requires no API key. OpenAI uses a 60-second timeout and no retries. Ollama uses a 5-second connection timeout and 120-second operation timeout; environment proxies are bypassed for local requests. No automatic provider fallback or retry is performed.
+- Environment loading now targets `backend/.env` consistently across working directories, preserving inherited environment overrides. `.env` was not changed. `backend/.env.example` documents provider selection and optional cloud configuration.
+- `backend/app/main.py`: preserves endpoint schemas and sanitized 502 errors; safe structured logging now also handles local connection, timeout, HTTP, configuration, and malformed-response failures.
+- `backend/requirements.txt`: explicitly declares already installed `httpx2==2.16.0`, also used by the OpenAI SDK.
+- `backend/tests/test_chat.py`: eight focused tests passed, covering local default without credentials, local request settings, OpenAI dispatch, configuration errors, sanitized failures, and existing HTTP endpoints.
+- One real request through the application's ASGI `/api/v1/chat` route attempted local Ollama and returned 502 with `ConnectError`; no provider HTTP response was received. Localhost access from this environment remains unavailable; this does not establish that the user's Ollama service is down.
+- With the updated backend running locally, verify once using:
+  `curl --max-time 130 -sS http://127.0.0.1:8000/api/v1/chat -H 'Content-Type: application/json' -d '{"message":"Reply with OK only."}'`
+- Limitations: health reports application liveness only; model installation and Ollama availability are managed externally. Requests remain single-turn. OpenAI package remains an installation dependency, but its credentials and service are optional.
+
+## Task 04 — Final-answer-only Qwen3 output (2026-11-01)
+- Root cause in application handling: Ollama's `message.content` was returned verbatim. The reported inline reasoning and closing tag therefore reached clients despite `think:false`. The precise local server/template reason for ignoring or failing to separate thinking is unverified.
+- `backend/app/services/llm.py`: retains native `think:false` and reads only `message.content`, never `message.thinking`. Adds Qwen3's `/no_think` system instruction for compatibility. A small Ollama-only fallback takes text after the last `</think>` (including when the opening tag is absent), discards unfinished `<think>` tails, and trims whitespace. Empty final answers raise the existing sanitized provider error rather than returning reasoning. OpenAI behavior and endpoint schemas remain unchanged.
+- Controls follow [Ollama thinking fields](https://github.com/ollama/ollama/blob/main/docs/capabilities/thinking.mdx) and [Qwen's /no_think guidance](https://qwen.readthedocs.io/en/stable/inference/transformers.html).
+- `backend/tests/test_chat.py`: nine tests passed, with eight regression cases covering structured thinking, complete and missing-opening tags, empty thinking, plain answers, unfinished reasoning, and missing final answers. Existing OpenAI and endpoint checks still pass. No live API requests were made.
+- Limitation: fallback recognizes explicit lowercase Qwen tags; unmarked reasoning cannot be reliably distinguished from an answer. Literal think tags in requested answer content may be treated as reasoning delimiters. Local template behavior remains unverified; no model/server changes were made.
+
+## Task 05 — Verified integration release (2026-11-01)
+- User confirmed local `POST /api/v1/chat` returned `{"response":"OK"}` using Ollama and Qwen3 4B. Local final-answer verification is now successful; the earlier environment connection failure is not a local deployment blocker. OpenAI's original live failure remains unconfirmed.
+- Re-ran the focused suite: all nine tests passed. Reviewed the six changed integration files; no unexpected files or pre-staged changes were present. Only source, tests, example configuration, dependencies, and this log are included. Secrets, virtual environments, models, and generated artifacts are excluded.
