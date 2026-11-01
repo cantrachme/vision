@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from app.services.tts import SpeechBusy, SpeechUnavailable, speak_text
+from app.services.tts import EmptySpeech, SpeechBusy, SpeechUnavailable, speak_text
 
 router = APIRouter()
 
@@ -28,6 +28,8 @@ class SpeakResponse(BaseModel):
 async def speak(request: SpeakRequest):
     try:
         await run_in_threadpool(speak_text, request.text)
+    except EmptySpeech:
+        raise HTTPException(422, 'Text contains no speakable content after emoji removal.') from None
     except SpeechUnavailable:
         raise HTTPException(501, 'Local speech playback requires macOS.') from None
     except SpeechBusy:

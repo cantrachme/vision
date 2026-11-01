@@ -3,7 +3,13 @@ import platform
 import subprocess
 from threading import Lock
 
+from app.services.text_sanitizer import remove_emojis
+
 _lock = Lock()
+
+
+class EmptySpeech(Exception):
+    pass
 
 
 class SpeechUnavailable(Exception):
@@ -15,6 +21,9 @@ class SpeechBusy(Exception):
 
 
 def speak_text(text: str) -> None:
+    text = remove_emojis(text)
+    if not text.strip():
+        raise EmptySpeech()
     if platform.system() != 'Darwin':
         raise SpeechUnavailable()
     # Reject overlap instead of queuing an unbounded number of utterances.

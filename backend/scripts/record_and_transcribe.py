@@ -6,19 +6,27 @@ import httpx2 as httpx
 import sounddevice as sd
 
 
-def main():
+def record_audio():
     print('Recording for five seconds...')
     samples = sd.rec(5 * 16000, samplerate=16000, channels=1, dtype='int16')
-    sd.wait()
+    try:
+        sd.wait()
+    finally:
+        sd.stop()
     audio = io.BytesIO()
     with wave.open(audio, 'wb') as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(16000)
         wav.writeframes(samples.tobytes())
+    return audio.getvalue()
+
+
+def main():
+    audio = record_audio()
     try:
         response = httpx.post('http://127.0.0.1:8000/api/v1/transcribe',
-                              files={'file': ('clip.wav', audio.getvalue(), 'audio/wav')},
+                              files={'file': ('clip.wav', audio, 'audio/wav')},
                               timeout=180, trust_env=False)
         response.raise_for_status()
         print(response.json()['text'])
