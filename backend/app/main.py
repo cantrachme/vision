@@ -9,6 +9,7 @@ from openai import OpenAIError
 import httpx2 as httpx
 
 from app.services.llm import generate_response, ProviderError
+from app.services.transcription_api import router as transcription_router
 
 logger = logging.getLogger(__name__)
 
@@ -81,3 +82,6 @@ async def chat(request: ChatRequest):
             status_code=502,
             detail="AI provider request failed. Check server logs.",
         )
+
+
+app.include_router(transcription_router)
