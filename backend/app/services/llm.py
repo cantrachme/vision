@@ -44,7 +44,9 @@ def _final_ollama_answer(content: str) -> str:
     return content
 
 
-async def generate_response(message: str) -> str:
+async def generate_response(message: str, history: list[dict[str, str]] | None = None) -> str:
+    messages = [dict(turn) for turn in (history or [])[-20:]]
+    messages.append({"role": "user", "content": message})
     provider = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
     if provider == "openai":
         if not os.getenv("OPENAI_API_KEY"):
@@ -52,13 +54,19 @@ async def generate_response(message: str) -> str:
         async with AsyncOpenAI(timeout=60.0, max_retries=0) as client:
             response = await client.responses.create(
                 model=MODEL, instructions=SYSTEM_PROMPT,
-                input=message, max_output_tokens=300,
+                input=messages, max_output_tokens=300,
             )
+            if not response.output_text.strip():
+                raise ProviderError("invalid_response")
             return response.output_text
     if provider != "ollama":
         raise ProviderError("invalid_provider")
 
-    model = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+    model = os.getenv("OLLAMA_MODEL", "qwen3:4b-instruct").strip()
+    # The registry's generic 4B tag aliases the thinking checkpoint.
+    # Keep existing .env configurations usable with the non-thinking model.
+    if model.lower() == "qwen3:4b":
+        model = "qwen3:4b-instruct"
     system_prompt = SYSTEM_PROMPT + ("\n/no_think" if model.lower().startswith("qwen3:") else "")
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=5.0),
                                  trust_env=False) as client:
@@ -66,15 +74,18 @@ async def generate_response(message: str) -> str:
             os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/chat",
             json={
                 "model": model,
-                "messages": [{"role": "system", "content": system_prompt},
-                             {"role": "user", "content": message}],
+                "messages": [{"role": "system", "content": system_prompt}] + messages,
                 "stream": False, "think": False,
                 "options": {"num_predict": 300},
             },
         )
         response.raise_for_status()
         try:
-            content = response.json()["message"]["content"]
+            payload = response.json()
+            # A length-limited generation may contain no completed final answer.
+            if payload.get("done_reason") == "length":
+                raise ProviderError("incomplete_response")
+            content = payload["message"]["content"]
             if not isinstance(content, str) or not content.strip():
                 raise ValueError()
             return _final_ollama_answer(content)

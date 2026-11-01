@@ -19,7 +19,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.response, 'Hello')
         create.assert_awaited_once_with(
             model=llm.MODEL, instructions=llm.SYSTEM_PROMPT,
-            input='Hi', max_output_tokens=300,
+            input=[{'role': 'user', 'content': 'Hi'}], max_output_tokens=300,
         )
 
     async def test_provider_failure_is_sanitized(self):
@@ -65,12 +65,13 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             with patch('app.main.generate_response', AsyncMock(return_value='Hello')):
                 response = await client.post('/api/v1/chat', json={'message': 'Hi'})
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json(), {'response': 'Hello'})
+            self.assertEqual(response.json()['response'], 'Hello')
+            self.assertIn('session_id', response.json())
 
     async def test_ollama_default_without_key(self):
         async def respond(request):
             payload = json.loads(request.content)
-            self.assertEqual(payload['model'], 'qwen3:4b')
+            self.assertEqual(payload['model'], 'qwen3:4b-instruct')
             self.assertFalse(payload['think'])
             self.assertFalse(payload['stream'])
             return httpx.Response(200, json={'message': {'content': 'Local hello'}})
@@ -125,3 +126,18 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
                     else:
                         result = await chat(ChatRequest(message='Hi'))
                         self.assertEqual(result.response, expected)
+
+    async def test_ollama_model_selection_and_incomplete_output(self):
+        real_client = httpx.AsyncClient
+        for configured, expected in [('qwen3:4b', 'qwen3:4b-instruct'),
+                                     ('custom-model', 'custom-model')]:
+            def respond(request):
+                self.assertEqual(json.loads(request.content)['model'], expected)
+                return httpx.Response(200, json={
+                    'done_reason': 'length',
+                    'message': {'content': 'Unfinished untagged generation'}})
+            with patch.dict('os.environ', {'LLM_PROVIDER': 'ollama', 'OLLAMA_MODEL': configured}), patch.object(
+                llm.httpx, 'AsyncClient', side_effect=lambda **kw: real_client(
+                    transport=httpx.MockTransport(respond), **kw)):
+                with self.assertRaises(llm.ProviderError):
+                    await llm.generate_response('Hi')

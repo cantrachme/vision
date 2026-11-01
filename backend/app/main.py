@@ -1,3 +1,5 @@
+import asyncio
+from uuid import UUID, uuid4
 import json
 import logging
 
@@ -17,12 +19,18 @@ app = FastAPI(
 )
 
 
+# Accessed on the application event loop; no await between lookup and insertion.
+_sessions: dict[UUID, tuple[asyncio.Lock, list[dict[str, str]]]] = {}
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
+    session_id: UUID | None = None
 
 
 class ChatResponse(BaseModel):
     response: str
+    session_id: UUID
 
 
 @app.get("/")
@@ -44,8 +52,15 @@ async def health():
 @app.post("/api/v1/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        answer = await generate_response(request.message)
-        return ChatResponse(response=answer)
+        session_id = request.session_id or uuid4()
+        lock, history = _sessions.setdefault(session_id, (asyncio.Lock(), []))
+        async with lock:
+            answer = await generate_response(request.message, history=[dict(turn) for turn in history])
+            result = ChatResponse(response=answer, session_id=session_id)
+            history.extend([{"role": "user", "content": request.message},
+                            {"role": "assistant", "content": answer}])
+            del history[:-20]
+            return result
 
     except (OpenAIError, httpx.HTTPError, ProviderError) as exc:
         # Provider messages, bodies, headers, and tracebacks may contain secrets.
