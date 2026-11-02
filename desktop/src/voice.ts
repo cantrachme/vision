@@ -1,3 +1,4 @@
+import { createSilenceDetector } from './silence.ts';
 import { fetch } from '@tauri-apps/plugin-http';
 
 export function encodeWav(samples: Float32Array, rate: number): Blob {
@@ -11,49 +12,87 @@ export function encodeWav(samples: Float32Array, rate: number): Blob {
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
-export async function recordVoice(signal: AbortSignal): Promise<Blob> {
+export interface RecordingOptions {
+  silenceDetection?: boolean;
+  onReady?: (stop: () => void) => void;
+  onDuration?: (seconds: number) => void;
+}
+export async function recordVoice(signal: AbortSignal, options: RecordingOptions = {}): Promise<Blob> {
+  signal.throwIfAborted();
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone capture is unavailable. Open the native app and check macOS permissions.');
   const context = new AudioContext();
   void context.resume().catch(() => {});
-  const stop = (stream: MediaStream) => stream.getTracks().forEach(track => track.stop());
-  let stream: MediaStream | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stream: MediaStream | undefined, source: MediaStreamAudioSourceNode | undefined;
+  let processor: AudioWorkletNode | undefined;
+  let interval: ReturnType<typeof setInterval> | undefined;
+  let limit: ReturnType<typeof setTimeout> | undefined;
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  let abortListener = () => {};
+  let deviceListener = () => {};
+  const stopTracks = (value: MediaStream) => value.getTracks().forEach(track => track.stop());
   const permissionSignal = AbortSignal.any([signal, AbortSignal.timeout(30000)]);
   try {
     const acquisition = navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
-    // A permission dialog can outlive cancellation; never leave late tracks running.
-    acquisition.then(value => { if (permissionSignal.aborted) stop(value); }, () => {});
+    acquisition.then(value => { if (permissionSignal.aborted) stopTracks(value); }, () => {});
     stream = await new Promise<MediaStream>((resolve, reject) => {
       const abort = () => reject(new Error('Microphone permission was cancelled or timed out.'));
       permissionSignal.addEventListener('abort', abort, { once: true });
       acquisition.then(value => { permissionSignal.removeEventListener('abort', abort); resolve(value); }, error => { permissionSignal.removeEventListener('abort', abort); reject(error); });
     });
     signal.throwIfAborted();
+    await context.audioWorklet.addModule(new URL('./pcm-worklet.js', import.meta.url).href);
     await context.resume();
-    const source = context.createMediaStreamSource(stream);
-    // A five-second PCM capture avoids Safari MediaRecorder's MP4/AAC format,
-    // which the existing WAV/MP3 endpoint intentionally does not accept.
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    const mute = context.createGain(); mute.gain.value = 0;
+    signal.throwIfAborted();
+    source = context.createMediaStreamSource(stream);
+    processor = new AudioWorkletNode(context, 'vision-pcm', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
     const chunks: Float32Array[] = [];
-    processor.onaudioprocess = event => chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
-    source.connect(processor); processor.connect(mute); mute.connect(context.destination);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const abort = () => { clearTimeout(timer); reject(new Error('Recording cancelled.')); };
-        signal.addEventListener('abort', abort, { once: true });
-        timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 5000);
-      });
-    } finally { processor.onaudioprocess = null; processor.disconnect(); source.disconnect(); mute.disconnect(); }
-    const count = Math.min(chunks.reduce((n, c) => n + c.length, 0), Math.round(context.sampleRate * 5));
-    if (!count) throw new Error('No microphone audio received. Check your input device.');
-    const samples = new Float32Array(count); let offset = 0;
-    for (const chunk of chunks) { const length = Math.min(chunk.length, count - offset); samples.set(chunk.subarray(0, length), offset); offset += length; }
+    const detectSilence = createSilenceDetector();
+    let sampleCount = 0;
+    await new Promise<void>((resolve, reject) => {
+      let stopping = false;
+      const stop = () => {
+        if (stopping) return;
+        stopping = true;
+        processor!.port.postMessage('stop');
+        flushTimer = setTimeout(() => reject(new Error('Microphone did not stop correctly. Please try again.')), 2000);
+      };
+      abortListener = () => reject(new Error('Recording cancelled.'));
+      deviceListener = () => reject(new Error('Microphone disconnected. Check your input device.'));
+      signal.addEventListener('abort', abortListener, { once: true });
+      stream!.getTracks().forEach(track => track.addEventListener('ended', deviceListener));
+      processor!.onprocessorerror = () => reject(new Error('Audio recording failed. Please try again.'));
+      processor!.port.onmessage = event => {
+        if (event.data.done) { resolve(); return; }
+        const samples = event.data.samples as Float32Array;
+        const remaining = Math.round(context.sampleRate * 60) - sampleCount;
+        const chunk = samples.slice(0, Math.max(0, remaining));
+        if (chunk.length) { chunks.push(chunk); sampleCount += chunk.length; }
+        if (sampleCount >= context.sampleRate * 60 || (options.silenceDetection && detectSilence(chunk, context.sampleRate))) stop();
+      };
+      // Worklet outputs zeros: processing is live, microphone is never monitored.
+      source!.connect(processor!); processor!.connect(context.destination);
+      const start = performance.now();
+      options.onDuration?.(0);
+      interval = setInterval(() => options.onDuration?.(Math.min(60, Math.floor((performance.now() - start) / 1000))), 250);
+      limit = setTimeout(stop, 60000);
+      options.onReady?.(stop);
+    });
+    signal.throwIfAborted();
+    if (sampleCount < context.sampleRate * .1) throw new Error('Recording is empty or too short. Please try again.');
+    const samples = new Float32Array(sampleCount); let offset = 0;
+    for (const chunk of chunks) { samples.set(chunk, offset); offset += chunk.length; }
     return encodeWav(samples, context.sampleRate);
   } catch (error) {
     if (error instanceof DOMException && error.name === 'NotAllowedError') throw new Error('Microphone denied. Allow VISION in System Settings → Privacy & Security → Microphone, then restart.');
     throw new Error(error instanceof Error && !(error instanceof DOMException) ? error.message : 'Microphone recording failed. Check permissions and input device.');
-  } finally { clearTimeout(timer); if (stream) stop(stream); await context.close(); }
+  } finally {
+    clearInterval(interval); clearTimeout(limit); clearTimeout(flushTimer);
+    signal.removeEventListener('abort', abortListener);
+    if (processor) { processor.port.onmessage = null; processor.onprocessorerror = null; processor.port.close(); processor.disconnect(); }
+    source?.disconnect();
+    if (stream) { stream.getTracks().forEach(track => track.removeEventListener('ended', deviceListener)); stopTracks(stream); }
+    await context.close().catch(() => {});
+  }
 }
 
 async function voiceRequest(path: string, body: BodyInit, signal: AbortSignal, timeout: number, json = false) {

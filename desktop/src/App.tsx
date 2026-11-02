@@ -11,6 +11,9 @@ type Status = 'checking' | 'connected' | 'disconnected';
 export default function App() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [recording, setRecording] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [silenceDetection, setSilenceDetection] = useState(false);
+  const stopRecording = useRef<(() => void) | null>(null);
   const [disabled, setDisabled] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [pending, setPending] = useState(false);
@@ -25,8 +28,9 @@ export default function App() {
     setPending(true); setError(''); setPanelOpen(true);
     try {
       if (voice) {
-        setRecording(true); setOrbState('listening');
-        const audio = await recordVoice(controller.signal);
+        setDuration(0); setOrbState('listening');
+        const audio = await recordVoice(controller.signal, { silenceDetection, onReady: stop => { stopRecording.current = stop; setRecording(true); }, onDuration: setDuration });
+        stopRecording.current = null;
         setRecording(false); setOrbState('thinking');
         text = await transcribeVoice(audio, controller.signal);
       }
@@ -41,8 +45,9 @@ export default function App() {
     } catch (failure) {
       if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Chat request failed.');
     } finally {
+      stopRecording.current = null;
       inFlight.current = null;
-      if (!controller.signal.aborted) { setRecording(false); setPending(false); setOrbState('idle'); }
+      setRecording(false); setPending(false); setOrbState('idle');
     }
   };
   const [orbState, setOrbState] = useState<OrbState>('idle');
@@ -66,8 +71,10 @@ export default function App() {
     <header><div className="wordmark">VISION</div><p>Your personal AI assistant</p></header>
     <ParticleOrb state={orbState} />
     <div className="interaction-controls">
-      <MicrophoneButton recording={recording} disabled={disabled || pending} onClick={() => { void submit('', true); }} />
-      <p className="preview-note">{recording ? 'Allow microphone access if prompted, then speak for five seconds.' : 'Click to record a five-second voice turn.'}</p>
+      <MicrophoneButton recording={recording} disabled={disabled || (pending && !recording)} onClick={() => { if (recording) stopRecording.current?.(); else void submit('', true); }} />
+      <p className="preview-note" role="status">{recording ? `Recording ${duration}s / 60s · click Stop to process` : pending && orbState === 'listening' ? 'Preparing microphone… allow access if prompted.' : 'Click Start talking, then Stop to send.'}</p>
+      {pending && orbState === 'listening' && <button onClick={() => inFlight.current?.abort()}>Cancel recording</button>}
+      <label className="state-selector"><input type="checkbox" checked={silenceDetection} disabled={pending} onChange={event => setSilenceDetection(event.target.checked)} />Stop after silence (experimental)</label>
     </div>
     <footer>
       <p className={`status ${status}`} role="status" aria-live="polite">
@@ -81,6 +88,6 @@ export default function App() {
       {import.meta.env.DEV && <label className="state-selector"><input type="checkbox" disabled={pending} checked={disabled} onChange={event => { setDisabled(event.target.checked); setRecording(false); setOrbState('idle'); }} />Disable controls</label>}
     </footer>
   </main>
-    <ConversationPanel open={panelOpen} messages={messages} disabled={disabled || recording || pending} pending={pending} pendingLabel={recording ? 'Listening for five seconds…' : orbState === 'speaking' ? 'VISION is speaking…' : 'VISION is thinking…'} error={error} onSend={text => { void submit(text); }} />
+    <ConversationPanel open={panelOpen} messages={messages} disabled={disabled || recording || pending} pending={pending} pendingLabel={recording ? `Listening · ${duration}s / 60s`  : orbState === 'speaking' ? 'VISION is speaking…' : 'VISION is thinking…'} error={error} onSend={text => { void submit(text); }} />
   </div>;
 }
