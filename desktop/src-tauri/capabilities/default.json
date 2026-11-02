@@ -1,1 +1,27 @@
-{"identifier":"main-capability","description":"Main window: local backend health checks only","windows":["main"],"permissions":["core:default",{"identifier":"http:default","allow":[{"url":"http://127.0.0.1:*/health"},{"url":"http://localhost:*/health"}]}]}
+{
+  "identifier": "main-capability",
+  "description": "Main window: local backend health and chat",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "http://127.0.0.1:*/health"
+        },
+        {
+          "url": "http://localhost:*/health"
+        },
+        {
+          "url": "http://127.0.0.1:*/api/v1/chat"
+        },
+        {
+          "url": "http://localhost:*/api/v1/chat"
+        }
+      ]
+    }
+  ]
+}

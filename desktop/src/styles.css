@@ -64,3 +64,4 @@ footer { gap: 8px 18px; }
   .desktop-layout.panel-open .conversation { display: block; flex: 0 0 auto; height: min(440px, 75svh); min-height: 260px; border-left: 0; border-top: 1px solid #192a31; }
 }
 @media (prefers-reduced-motion: reduce) { .desktop-layout, .desktop-layout .conversation { transition: none; } }
+.chat-error { color: #e7aaa5; line-height: 1.6; }
