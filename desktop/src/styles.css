@@ -16,3 +16,51 @@ select { background: #0b1218; border: 1px solid #243039; color: #b2cccf; padding
 select:focus-visible { outline: 1px solid #64d7e6; outline-offset: 3px; }
 .orb-fallback { position: absolute; top: 45%; width: 100%; text-align: center; color: #82959b; font-size: 12px; }
 @media (max-height: 400px) { main { padding: 14px 0 12px; gap: 4px; } header p { margin: 6px 0; } }
+main { grid-template-rows: auto minmax(90px, 1fr) auto auto; overflow-y: auto; }
+.interaction-controls { width: min(520px, calc(100% - 32px)); justify-self: center; text-align: center; }
+button, input { font: inherit; }
+button { cursor: pointer; color: #b2cccf; background: #0b1218; border: 1px solid #243039; border-radius: 8px; padding: 9px 13px; }
+button:hover:not(:disabled) { border-color: #4e8d96; background: #101f26; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button:focus-visible, input:focus-visible { outline: 2px solid #64d7e6; outline-offset: 3px; }
+.microphone { display: inline-flex; align-items: center; gap: 10px; border-radius: 24px; font-size: 12px; margin-bottom: 10px; transition: background .2s, border-color .2s; }
+.microphone.recording { color: #9cf5f3; border-color: #60cbc8; background: #123238; }
+.conversation { border: 1px solid #192a31; border-radius: 10px; background: #080e13; text-align: left; }
+.panel-toggle { display: flex; justify-content: space-between; width: 100%; border: 0; background: transparent; font-size: 11px; }
+.panel-collapse { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .22s ease, opacity .22s ease; }
+.panel-collapse.open { grid-template-rows: 1fr; opacity: 1; }
+.panel-inner { min-height: 0; overflow: hidden; }
+.message-log { max-height: min(180px, 24svh); overflow-y: auto; padding: 0 13px; font-size: 12px; overflow-wrap: anywhere; }
+.message strong { font-size: 10px; color: #7ad4d9; }
+.message p { margin: 5px 0 12px; line-height: 1.5; white-space: pre-wrap; }
+.message.user strong { color: #8d9ba5; }
+.empty-conversation, .preview-note { color: #71858d; font-size: 10px; }
+form { display: flex; gap: 8px; padding: 10px; }
+form input { min-width: 0; flex: 1; color: #d6eef0; border: 1px solid #243039; border-radius: 6px; background: #05090d; padding: 9px; font-size: 12px; }
+form button { font-size: 11px; }
+.preview-note { margin: 7px 0; }
+footer { gap: 8px 18px; }
+@media (prefers-reduced-motion: reduce) { .panel-collapse, .microphone { transition: none; } }
+
+/* Main and conversation occupy independent, bounded areas. */
+.desktop-layout { height: 100svh; min-height: 320px; display: grid; grid-template-columns: minmax(0, 1fr) 0px; transition: grid-template-columns .22s ease; overflow: hidden; }
+.desktop-layout.panel-open { grid-template-columns: minmax(0, 1fr) 360px; }
+.desktop-layout main { height: 100%; min-width: 0; min-height: 0; position: relative; padding-top: 60px; }
+.conversation-toggle { position: absolute; top: 12px; right: 16px; font-size: 11px; }
+.desktop-layout .conversation { min-width: 0; min-height: 0; border: 0; border-left: 1px solid #192a31; border-radius: 0; overflow: hidden; opacity: 0; transition: opacity .2s ease; }
+.panel-open .conversation { opacity: 1; }
+.desktop-layout .panel-inner { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.panel-inner h2 { margin: 0; padding: 24px 20px; font-size: 15px; font-weight: 500; border-bottom: 1px solid #192a31; }
+.desktop-layout .message-log { min-height: 0; max-height: none; padding: 20px; font-size: 14px; }
+.desktop-layout .message { margin-bottom: 24px; }
+.desktop-layout .message strong { font-size: 11px; letter-spacing: .04em; }
+.desktop-layout .message p { margin: 8px 0 0; line-height: 1.7; }
+.desktop-layout form { padding: 16px; border-top: 1px solid #192a31; background: #080e13; }
+.desktop-layout form input { font-size: 14px; }
+@media (max-width: 680px) {
+  .desktop-layout { display: flex; flex-direction: column; overflow-y: auto; }
+  .desktop-layout main { flex: 0 0 auto; height: 100svh; min-height: 320px; }
+  .desktop-layout .conversation { display: none; }
+  .desktop-layout.panel-open .conversation { display: block; flex: 0 0 auto; height: min(440px, 75svh); min-height: 260px; border-left: 0; border-top: 1px solid #192a31; }
+}
+@media (prefers-reduced-motion: reduce) { .desktop-layout, .desktop-layout .conversation { transition: none; } }
