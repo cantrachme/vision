@@ -1,6 +1,6 @@
 {
   "identifier": "main-capability",
-  "description": "Main window: local backend health and chat",
+  "description": "Main window local health, chat, transcription and speech",
   "windows": [
     "main"
   ],
@@ -20,6 +20,18 @@
         },
         {
           "url": "http://localhost:*/api/v1/chat"
+        },
+        {
+          "url": "http://127.0.0.1:*/api/v1/transcribe"
+        },
+        {
+          "url": "http://127.0.0.1:*/api/v1/speak"
+        },
+        {
+          "url": "http://localhost:*/api/v1/transcribe"
+        },
+        {
+          "url": "http://localhost:*/api/v1/speak"
         }
       ]
     }

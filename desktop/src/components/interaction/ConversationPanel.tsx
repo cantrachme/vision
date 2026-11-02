@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 export interface Message { id: number; role: 'user' | 'assistant'; text: string }
-export default function ConversationPanel({ open, messages, disabled, pending, error, onSend }: { open: boolean; messages: Message[]; disabled: boolean; pending: boolean; error: string; onSend: (text: string) => void }) {
+export default function ConversationPanel({ open, messages, disabled, pending, pendingLabel, error, onSend }: { open: boolean; messages: Message[]; disabled: boolean; pending: boolean; pendingLabel: string; error: string; onSend: (text: string) => void }) {
   const [draft, setDraft] = useState('');
   const log = useRef<HTMLDivElement>(null);
   useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [messages, open, pending, error]);
@@ -10,7 +10,7 @@ export default function ConversationPanel({ open, messages, disabled, pending, e
         <div className="message-log" ref={log} role="log" aria-label="Conversation messages" aria-live="polite" aria-relevant="additions">
           {!messages.length && <p className="empty-conversation">Your conversation will appear here.</p>}
           {messages.map(message => <article className={`message ${message.role}`} key={message.id}><strong>{message.role === 'user' ? 'You' : 'VISION'}</strong><p>{message.text}</p></article>)}
-          {pending && <p role="status">VISION is thinking…</p>}
+          {pending && <p role="status">{pendingLabel}</p>}
           {error && <p role="alert" className="chat-error">{error}</p>}
         </div>
         <form onSubmit={event => { event.preventDefault(); if (!disabled && draft.trim()) { onSend(draft.trim()); setDraft(''); } }}>

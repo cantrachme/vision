@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import MicrophoneButton from './components/interaction/MicrophoneButton';
 import ConversationPanel, { type Message } from './components/interaction/ConversationPanel';
+import { recordVoice, transcribeVoice, speakVoice } from './voice';
 import { sendChat } from './chat';
 import { checkBackend } from './backend';
 import ParticleOrb, { type OrbState } from './components/orb/ParticleOrb';
@@ -17,22 +18,31 @@ export default function App() {
   const session = useRef<string | undefined>(undefined);
   const inFlight = useRef<AbortController | null>(null);
   useEffect(() => () => { inFlight.current?.abort(); }, []);
-  const submit = async (text: string) => {
+  const submit = async (text: string, voice = false) => {
     if (inFlight.current) return;
     const controller = new AbortController();
     inFlight.current = controller;
-    setPending(true); setError(''); setOrbState('thinking');
-    setMessages(previous => [...previous, { id: previous.length, role: 'user', text }]);
+    setPending(true); setError(''); setPanelOpen(true);
     try {
+      if (voice) {
+        setRecording(true); setOrbState('listening');
+        const audio = await recordVoice(controller.signal);
+        setRecording(false); setOrbState('thinking');
+        text = await transcribeVoice(audio, controller.signal);
+      }
+      controller.signal.throwIfAborted();
+      setOrbState('thinking');
+      setMessages(previous => [...previous, { id: previous.length, role: 'user', text }]);
       const answer = await sendChat(text, session.current, controller.signal);
       if (controller.signal.aborted) return;
       session.current = answer.session_id;
       setMessages(previous => [...previous, { id: previous.length, role: 'assistant', text: answer.response }]);
+      if (voice) { setOrbState('speaking'); await speakVoice(answer.response, controller.signal); }
     } catch (failure) {
       if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Chat request failed.');
     } finally {
       inFlight.current = null;
-      if (!controller.signal.aborted) { setPending(false); setOrbState('idle'); }
+      if (!controller.signal.aborted) { setRecording(false); setPending(false); setOrbState('idle'); }
     }
   };
   const [orbState, setOrbState] = useState<OrbState>('idle');
@@ -56,11 +66,8 @@ export default function App() {
     <header><div className="wordmark">VISION</div><p>Your personal AI assistant</p></header>
     <ParticleOrb state={orbState} />
     <div className="interaction-controls">
-      <MicrophoneButton recording={recording} disabled={!import.meta.env.DEV || disabled || pending} onClick={() => {
-        if (recording) { setRecording(false); setOrbState('idle'); }
-        else { setRecording(true); setOrbState('listening'); }
-      }} />
-      {import.meta.env.DEV && <p className="preview-note">Microphone preview only · text chat uses your backend</p>}
+      <MicrophoneButton recording={recording} disabled={disabled || pending} onClick={() => { void submit('', true); }} />
+      <p className="preview-note">{recording ? 'Allow microphone access if prompted, then speak for five seconds.' : 'Click to record a five-second voice turn.'}</p>
     </div>
     <footer>
       <p className={`status ${status}`} role="status" aria-live="polite">
@@ -74,6 +81,6 @@ export default function App() {
       {import.meta.env.DEV && <label className="state-selector"><input type="checkbox" disabled={pending} checked={disabled} onChange={event => { setDisabled(event.target.checked); setRecording(false); setOrbState('idle'); }} />Disable controls</label>}
     </footer>
   </main>
-    <ConversationPanel open={panelOpen} messages={messages} disabled={disabled || recording || pending} pending={pending} error={error} onSend={submit} />
+    <ConversationPanel open={panelOpen} messages={messages} disabled={disabled || recording || pending} pending={pending} pendingLabel={recording ? 'Listening for five seconds…' : orbState === 'speaking' ? 'VISION is speaking…' : 'VISION is thinking…'} error={error} onSend={text => { void submit(text); }} />
   </div>;
 }
